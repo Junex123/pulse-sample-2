@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "users": {
+      "path": "users/{userId}",
+      "description": "User profile, fitness settings, and preferences isolated by Firebase Auth UID",
+      "fields": {
+        "uid": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "email": { "type": "string", "required": true },
+        "goal": { "type": "string", "required": true },
+        "experienceLevel": { "type": "string", "required": true },
+        "trainingLocation": { "type": "string", "required": true },
+        "equipmentAvailable": { "type": "string", "required": true },
+        "preferredFrequencyDays": { "type": "number", "required": true },
+        "weightKg": { "type": "number", "required": true },
+        "heightCm": { "type": "number", "required": true },
+        "hasCompletedOnboarding": { "type": "boolean", "required": true },
+        "lastSyncedAt": { "type": "number", "required": true }
+      }
+    },
+    "workout_sessions": {
+      "path": "users/{userId}/workout_sessions/{sessionId}",
+      "description": "Completed workout sessions and logs for the user",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "title": { "type": "string", "required": true },
+        "routineId": { "type": "string", "required": false },
+        "startTimeMillis": { "type": "number", "required": true },
+        "endTimeMillis": { "type": "number", "required": true },
+        "durationMinutes": { "type": "number", "required": true },
+        "notes": { "type": "string", "required": false },
+        "totalVolumeKg": { "type": "number", "required": true },
+        "isCompleted": { "type": "boolean", "required": true },
+        "setsJson": { "type": "string", "required": false }
+      }
+    },
+    "personal_records": {
+      "path": "users/{userId}/personal_records/{exerciseId}",
+      "description": "User personal strength records and one-rep-maxes",
+      "fields": {
+        "exerciseId": { "type": "string", "required": true },
+        "exerciseName": { "type": "string", "required": true },
+        "maxWeightKg": { "type": "number", "required": true },
+        "maxReps": { "type": "number", "required": true },
+        "estimatedOneRepMaxKg": { "type": "number", "required": false },
+        "achievedDateMillis": { "type": "number", "required": true }
+      }
+    },
+    "custom_routines": {
+      "path": "users/{userId}/custom_routines/{routineId}",
+      "description": "User custom created workout routines",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "description": { "type": "string", "required": false },
+        "category": { "type": "string", "required": true },
+        "exerciseIdsCsv": { "type": "string", "required": true },
+        "estimatedMinutes": { "type": "number", "required": true }
+      }
+    }
+  }
+}

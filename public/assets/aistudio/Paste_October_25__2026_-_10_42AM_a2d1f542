@@ -1,0 +1,958 @@
+# PULSE: PRODUCTION-READY ANDROID APPLICATION
+## Master Engineering, Security, Quality Assurance, and Release Brief
+
+Act as a principal Android engineer, software architect, security engineer, QA lead, product designer, and Google Play release specialist.
+
+Your task is to take the EXISTING Pulse Android application and turn it into a reliable, polished, maintainable application that is ready for a real-world release, subject to the remaining account configuration, external credentials, and Google Play review.
+
+This is an existing project. You are not starting from scratch.
+
+You must inspect the existing source code, understand its architecture, preserve functional features, repair defects, implement missing functionality, and verify the results.
+
+Do not simply produce a report, a plan, a mockup, or a list of suggestions. Modify the actual project files.
+
+Do not claim that a task is completed unless the corresponding code has been implemented and the available verification has passed.
+
+---
+
+# 1. PRODUCT VISION
+
+Pulse is a modular personal health and fitness application.
+
+Its defining principle is:
+
+ONE SIMPLE APPLICATION. OPTIONAL EXTENSIONS. A PERSONALIZED EXPERIENCE.
+
+A beginner should be able to open the app and understand what to do immediately.
+
+Advanced users should be able to activate additional capabilities without overwhelming the default interface.
+
+The application should provide a unified experience across:
+- Home dashboard
+- Workout tracking
+- Exercise library
+- AI fitness coach
+- Nutrition
+- Recovery
+- Habits
+- Progress analytics
+- Optional fitness extensions
+- Settings and privacy
+
+The product must remain useful without an internet connection for its core local features.
+
+Do not introduce unnecessary complexity merely to increase the feature count.
+
+Prioritize reliability, usability, data integrity, security, accessibility, and maintainability.
+
+# 2. FIRST ACTION: INSPECT THE ENTIRE PROJECT
+
+Before modifying files:
+
+1. Inspect the root directory and complete project structure.
+2. Read the Gradle settings, version catalog, application build configuration, and manifest.
+3. Inspect the Kotlin source files, Room entities, DAOs, repositories, ViewModels, navigation, screens, and tests.
+4. Identify the Android SDK, Kotlin, Compose, Gradle, Java, and dependency versions already used.
+5. Identify existing working functionality and avoid replacing it unnecessarily.
+6. Locate TODOs, placeholder screens, no-op functions, incomplete navigation, hard-coded data, and unused dependencies.
+7. Review the existing audit findings included in this project context.
+8. Establish a baseline by running the available build, tests, and lint checks.
+
+The existing project is a native Kotlin and Jetpack Compose Android application.
+
+Keep the native Android architecture unless a specific, documented technical issue requires a change.
+
+Do not migrate the entire application to React, Flutter, or a different framework simply because it is easier to generate new code.
+
+Do not replace a functioning feature with a fake implementation.
+
+Create a concise internal remediation checklist, then begin implementation.
+
+If a required tool, dependency, SDK, credential, or external service is unavailable, record the limitation and continue with all work that can be completed safely.
+
+# 3. P0: SECURITY AND PRIVACY
+
+These requirements must be addressed before any public release.
+
+## 3.1 Secure Gemini integration
+
+The existing AI coach reads GEMINI_API_KEY from Android BuildConfig and makes direct requests to Gemini.
+
+This is not acceptable for a public production application when the key is a privileged credential.
+
+Implement a secure architecture:
+
+- Move privileged Gemini requests to a trusted backend.
+- Do not embed server credentials in Kotlin source, BuildConfig, resources, assets, or the APK.
+- Do not place secret API keys in URLs, browser-visible data, logs, or exception messages.
+- Use environment-based secret configuration on the backend.
+- Apply request validation, authentication where appropriate, quotas, rate limits, timeouts, and error handling.
+- Protect against abuse and unexpected API costs.
+- Restrict access to user-specific information.
+- Send only the information necessary for the requested AI operation.
+- Obtain informed consent before sending personal fitness information to an external AI service.
+- Provide a clear explanation that AI guidance is informational, not a medical diagnosis.
+
+Use the existing project architecture to implement the integration.
+
+If the backend cannot be deployed from this environment, implement the client contract, secure configuration interface, request models, error states, and deployment documentation.
+
+Do not fabricate a working remote backend.
+
+Do not use a hard-coded unrestricted API key as a fallback.
+
+The application must continue to work for non-AI features when the AI service is unavailable.
+
+## 3.2 Android permissions
+
+Review every permission in AndroidManifest.xml.
+
+Remove permissions that are not required.
+
+Request sensitive permissions only when the corresponding feature is activated and needs them.
+
+Explain why access is needed before requesting it.
+
+Handle denied permissions gracefully.
+
+Never assume that a user has granted access to health, location, camera, microphone, or activity data.
+
+## 3.3 Data protection
+
+Implement or verify:
+
+- Appropriate local database access restrictions.
+- Safe network communication using HTTPS.
+- No personal health data in production logs.
+- No secrets committed to source control.
+- Explicit user consent for optional data sharing.
+- A clear privacy settings screen.
+- Data export functionality where feasible.
+- User-accessible data deletion.
+- Clear distinction between local data and cloud data.
+- Appropriate Android backup and device-transfer behavior.
+
+Inspect the existing backup rules and data extraction configuration.
+
+Do not silently back up sensitive health data to an external destination without an intentional, documented design.
+
+Do not claim regulatory compliance without the required legal and technical verification.
+
+## 3.4 Release configuration
+
+Inspect application signing and release configuration.
+
+Never commit private release keystores, passwords, access tokens, or service-account credentials.
+
+Use environment variables or a suitable local secret configuration for release signing.
+
+Document which credentials the developer must configure independently.
+
+# 4. P0: FIX DATA INTEGRITY
+
+This application stores information that users may rely on to understand their fitness progress. Fabricated, duplicated, or corrupted records are unacceptable.
+
+## 4.1 Fix demo-data initialization
+
+The current initializeDefaultDataIfEmpty() method inserts sample records repeatedly.
+
+Implement safe initialization.
+
+Requirements:
+
+- Seed sample data at most once.
+- Use a persisted seed version or equivalent reliable mechanism.
+- Check whether appropriate records already exist.
+- Make initialization transactional.
+- Prevent repeated initialization after app restart.
+- Never insert sample records into a user's real history on every launch.
+- Ensure concurrent initialization cannot produce duplicate records.
+
+Test repeated calls, app restarts, and partially initialized databases.
+
+## 4.2 Separate sample and real records
+
+Implement a reliable mechanism to distinguish sample data from user-created records.
+
+Apply it consistently to workouts, measurements, nutrition, recovery, endurance, and any other seeded records.
+
+Requirements:
+
+- Label sample information visibly.
+- Never present fabricated values as actual measurements.
+- Ensure disabling demo mode does not merely hide the sample-data label.
+- Provide an explicit way to remove sample records.
+- Do not delete user-created records when removing demo data.
+- Prevent sample records from contaminating personal analytics unless explicitly selected.
+
+Where necessary, implement a safe database migration for the new record-source field.
+
+## 4.3 Normalize dates and timestamps
+
+Replace relative date strings such as "Today" with actual date or timestamp values.
+
+Requirements:
+
+- Store timestamps in a consistent format.
+- Store the necessary timezone or local-date context for daily habits.
+- Sort history by actual dates.
+- Handle day boundaries correctly.
+- Avoid hard-coded sample dates in runtime logic.
+- Handle daylight-saving changes and timezone changes appropriately.
+- Format dates for display separately from their stored representation.
+
+Use one consistent approach throughout the application.
+
+## 4.4 Correct habit streaks
+
+The existing habit logic can increase a streak through repeated taps.
+
+Implement date-based completion records.
+
+Requirements:
+
+- Store habit completion by habit ID and local date.
+- Prevent multiple completions from incrementing the same day's streak.
+- Calculate streaks from consecutive dates.
+- Support marking and unmarking a completion without corrupting history.
+- Handle missed days and daily rollover correctly.
+- Implement updateHabitProgress() or remove it if it is unnecessary.
+- Test streak calculations across month boundaries, year boundaries, and timezone changes.
+
+## 4.5 Replace destructive database migrations
+
+The current Room configuration uses destructive migration behavior that can delete every table when a migration is missing.
+
+Remove destructive migration behavior from production configuration.
+
+Implement explicit Room migrations for all schema changes introduced during this remediation.
+
+Requirements:
+
+- Preserve existing user data.
+- Preserve relationships and indexes.
+- Avoid silent database resets.
+- Test migration from the existing schema.
+- Test migration failure handling.
+- Provide a clear, recoverable error path if a database cannot be migrated.
+
+Never erase a user's workout history merely because a new app version was installed.
+
+# 5. P0: RESTORE THE ONBOARDING FLOW
+
+The existing application starts on Home even when onboarding has not been completed.
+
+Fix the startup and navigation logic.
+
+Requirements:
+
+1. Determine whether the user has completed onboarding.
+2. Load the relevant profile and preferences.
+3. Show a loading state while initialization is in progress.
+4. Show onboarding to first-time users.
+5. Show Home to returning users.
+6. Avoid a flash of the wrong screen.
+7. Preserve navigation state appropriately.
+8. Handle process recreation and app restarts.
+
+The onboarding flow should be skippable.
+
+Ask only for information needed to personalize the initial experience.
+
+Suggested onboarding fields:
+
+- Primary fitness goal.
+- Experience level.
+- Preferred training location.
+- Available equipment.
+- Preferred training frequency.
+- Optional body measurements.
+- Optional starter extensions.
+
+Do not request sensitive permissions during onboarding unless the user explicitly activates a feature that requires them.
+
+Persist completed onboarding correctly.
+
+# 6. P0: WORKOUT ENGINE
+
+Audit and complete the workout system.
+
+Preserve the existing workout models and repository patterns where practical.
+
+Implement and verify:
+
+- Exercise browsing and search.
+- Muscle group filtering.
+- Equipment filtering.
+- Exercise details and instructions.
+- Workout creation.
+- Workout editing.
+- Exercise reordering.
+- Exercise substitution.
+- Set and repetition logging.
+- Weight logging with clear units.
+- Perceived exertion where supported.
+- Rest timer.
+- Workout start and finish.
+- Workout cancellation.
+- Completed workout history.
+- Session duration.
+- Training volume calculations.
+- Personal records.
+- Progress tracking.
+- Empty states and validation.
+- Safe handling of interrupted sessions.
+
+## 6.1 Persist active workout sessions
+
+The existing active workout state is held in memory.
+
+Implement a persisted workout draft.
+
+Requirements:
+
+- Persist the current workout and completed sets.
+- Record session start time.
+- Derive elapsed duration from timestamps.
+- Restore the session after process death or force-stop.
+- Let users resume or discard an interrupted workout.
+- Avoid accidentally saving the same completed workout twice.
+- Persist state safely between screen transitions.
+
+The rest timer must not drift simply because a coroutine was paused or the device was locked.
+
+## 6.2 Correct personal-record logic
+
+Define and implement separate records where appropriate:
+
+- Maximum weight.
+- Maximum repetitions at a defined load.
+- Estimated one-repetition maximum.
+- Other supported exercise-specific records.
+
+Do not update a personal record based on an unrelated metric.
+
+Define the calculation rules and test edge cases.
+
+Ensure that changing units does not change the underlying physical result.
+
+## 6.3 Workout reliability
+
+Test:
+
+- Starting and completing a workout.
+- Adding and removing sets.
+- Editing completed entries if supported.
+- Cancelling a workout.
+- Resuming after process recreation.
+- Switching between screens.
+- Repeatedly tapping Finish.
+- Empty workouts.
+- Invalid weights or repetitions.
+- Database errors during save.
+
+# 7. P1: NUTRITION
+
+Complete the existing nutrition functionality without pretending to have an exhaustive or perfectly accurate food database.
+
+Requirements:
+
+- Food search.
+- Manual food entry.
+- Serving size and unit handling.
+- Meal categorization.
+- Daily calorie totals.
+- Protein, carbohydrates, and fat totals.
+- Meal history.
+- Edit and delete operations.
+- Daily and weekly summaries.
+- Clear empty states.
+- Validation for impossible or invalid entries.
+
+Use explicit data sources and document nutrition-data limitations.
+
+Do not invent exact nutrient values for arbitrary foods.
+
+If an AI assistant estimates nutrients from a description or photo, label the result as an estimate and let the user review and correct it before saving.
+
+Support common Indian foods where feasible.
+
+Separate the food database from UI code so it can be expanded later.
+
+Do not implement camera-based food recognition unless it is genuinely supported and tested.
+
+# 8. P1: RECOVERY, HEALTH, AND MEASUREMENTS
+
+Complete the recovery and progress features.
+
+Implement:
+
+- Weight history.
+- Optional body measurements.
+- Recovery logs.
+- Soreness ratings.
+- Sleep-duration logging.
+- Energy and fatigue ratings.
+- Optional resting heart rate and HRV entry.
+- Historical charts.
+- Date-range selection.
+- Data editing and deletion.
+- Meaningful empty states.
+- Correct chronological sorting.
+
+Do not invent wearable readings.
+
+Do not label self-reported values as sensor measurements.
+
+Do not claim that consumer recovery scores diagnose medical conditions.
+
+Present trends with context and avoid overconfident conclusions from small amounts of data.
+
+# 9. P1: EXTENSION ARCHITECTURE
+
+Pulse's modular design is a core product requirement.
+
+The first release should use built-in modules managed through a registry.
+
+Do not implement arbitrary executable-code downloads or an unrestricted third-party plugin system.
+
+Each extension should declare:
+
+- Stable ID.
+- Display name.
+- Version.
+- Category.
+- Description.
+- Availability status.
+- Required permissions.
+- Dependencies.
+- Compatibility information.
+- Navigation destinations.
+- Dashboard contributions.
+- Configuration requirements.
+
+Implement and test:
+
+- Browse extensions.
+- Search extensions.
+- View details.
+- Activate extension.
+- Deactivate extension.
+- Open active extension.
+- Configure preferences.
+- View requested permissions.
+- Revoke optional access.
+- Enforce dependencies.
+- Handle unavailable modules.
+- Persist installation state.
+- Restore state after process recreation.
+- Remove a module's UI contributions without deleting unrelated user data.
+
+The extension registry must be the source of truth for availability and activation.
+
+Avoid scattered hard-coded Boolean checks throughout the application.
+
+## Extension availability
+
+Classify modules honestly.
+
+Operational modules must work.
+
+Planned modules must be marked "Coming soon" or "Preview."
+
+Do not display Anatomy 3D, wearable integrations, or other advanced modules as fully functional if they are only placeholders.
+
+Keep the architecture extensible without adding unnecessary complexity to the first release.
+
+# 10. P1: USER INTERFACE AND ACCESSIBILITY
+
+Polish the existing Compose UI rather than replacing it blindly.
+
+The interface should be simple enough for a beginner and powerful enough for an advanced user.
+
+Requirements:
+
+- Consistent design system.
+- Consistent spacing and typography.
+- Accessible color contrast.
+- Support for light and dark themes.
+- Appropriate touch-target sizes.
+- Screen-reader labels.
+- Clear form labels.
+- Keyboard and focus behavior.
+- Responsive layouts.
+- Loading indicators.
+- Empty states.
+- Error messages.
+- Confirmation for destructive actions.
+- Success feedback.
+- No dead buttons.
+- No misleading placeholder interactions.
+- No unnecessary permission prompts.
+- No unbounded information on the Home screen.
+
+The default Home screen should expose only a few relevant actions.
+
+Optional extensions should not overwhelm the user.
+
+Ensure every primary navigation destination works.
+
+Ensure the back button behaves correctly.
+
+Handle keyboard visibility and window insets.
+
+Check text scaling and small-screen layouts.
+
+Do not use a generic dashboard redesign as a substitute for implementing the actual features.
+
+# 11. P1: AI COACH QUALITY
+
+The AI coach should be useful, bounded, and honest.
+
+Implement:
+
+- Clear loading states.
+- Request timeouts.
+- Retry controls.
+- Graceful handling of unavailable services.
+- Rate limiting.
+- Appropriate request validation.
+- Conversation history where supported.
+- User-controlled deletion of conversations.
+- Context selection.
+- Safe handling of malformed responses.
+- Clear separation between model output and verified measurements.
+
+The coach may explain exercise concepts, suggest general training structures, and summarize recorded activity.
+
+It must not claim to have analyzed data that was never provided.
+
+Do not let model output directly execute database operations.
+
+Validate structured AI responses before using them.
+
+Ask the user to confirm consequential changes to workout plans.
+
+Avoid medical diagnosis, medication instructions, and unsupported claims about disease prevention or treatment.
+
+Ensure the AI coach is not required for ordinary app functionality.
+
+# 12. P1: SETTINGS AND USER CONTROL
+
+Implement a complete settings experience:
+
+- Theme.
+- Units.
+- Profile.
+- Fitness goals.
+- Notification preferences.
+- Extension management.
+- AI consent.
+- Data export.
+- Data deletion.
+- Privacy information.
+- App version.
+- Open-source licenses and third-party notices where required.
+- Error reporting or diagnostic export where appropriate.
+
+Use kilograms and centimeters as sensible defaults for Indian users, while supporting other units.
+
+Changing units must convert displayed values correctly rather than modifying the underlying value incorrectly.
+
+Never make data deletion ambiguous.
+
+Require confirmation for destructive operations.
+
+Explain the consequences before removing records.
+
+# 13. P1: NOTIFICATIONS AND DAILY HABITS
+
+If reminders are already implemented, audit and complete them.
+
+If they are missing, implement a minimal, reliable optional reminder system.
+
+Requirements:
+
+- User-configurable reminders.
+- Respect notification permission requirements.
+- Respect Android notification channels.
+- Handle permission denial.
+- Allow reminders to be disabled.
+- Avoid duplicate scheduling.
+- Handle timezone changes.
+- Avoid sending health data in notification previews unnecessarily.
+
+Do not add a large notification system if a smaller implementation meets the product requirement.
+
+# 14. P1: OFFLINE-FIRST BEHAVIOR
+
+Core functionality must work without network access.
+
+Offline-capable features should include:
+
+- Exercise library.
+- Workout creation and logging.
+- Completed workout history.
+- Nutrition entries.
+- Measurements.
+- Recovery entries.
+- Habits.
+- Extension activation state.
+- Local settings.
+
+The AI coach and future cloud integrations may require connectivity.
+
+When offline:
+
+- Show a clear status.
+- Preserve user input.
+- Avoid losing an in-progress workout.
+- Explain which functions need the internet.
+- Retry safely.
+- Do not duplicate writes when connectivity returns.
+
+Do not introduce cloud synchronization without a deliberate data model, user identity, authorization rules, and conflict-resolution strategy.
+
+For the first production release, prefer reliable local storage over a rushed synchronization system.
+
+# 15. P1: TESTING
+
+The existing tests are insufficient.
+
+Build a meaningful test suite.
+
+## Unit tests
+
+Cover:
+
+- Workout volume.
+- Personal records.
+- Unit conversions.
+- Habit streaks.
+- Date normalization.
+- Sample-data initialization.
+- Extension dependencies.
+- Extension activation.
+- Input validation.
+- AI response validation.
+
+## Repository and database tests
+
+Use an in-memory Room database where appropriate.
+
+Test:
+
+- Insert, update, delete, and query.
+- Date ordering.
+- Duplicate prevention.
+- Transaction behavior.
+- Sample-data removal.
+- Workout draft recovery.
+- Database migrations.
+- Preservation of user data across migrations.
+
+## ViewModel tests
+
+Test:
+
+- Onboarding state.
+- Workout lifecycle.
+- Workout persistence.
+- Error states.
+- Extension state.
+- Recovery logging.
+- Habit completion.
+- Repeated user actions.
+
+## UI tests
+
+Cover the main user journeys:
+
+1. First launch.
+2. Complete onboarding.
+3. Open Home.
+4. Start a workout.
+5. Log sets.
+6. Complete a workout.
+7. Restart the app.
+8. View saved history.
+9. Activate an extension.
+10. Disable the extension.
+11. Enter a nutrition record.
+12. View progress.
+13. Deny an optional permission.
+14. Use the app without internet.
+15. Delete sample data without deleting real records.
+
+Use deterministic sample fixtures in tests.
+
+Tests must not depend on a real Gemini API key or paid external service.
+
+Mock network calls where appropriate.
+
+Do not weaken assertions or delete failing tests merely to achieve a green test report.
+
+# 16. P1: BUILD SYSTEM AND DEPENDENCIES
+
+The existing archive is missing the Gradle wrapper scripts and wrapper JAR.
+
+Make the project reproducibly buildable.
+
+Requirements:
+
+- Include the Gradle wrapper scripts.
+- Include the correct wrapper JAR.
+- Configure a compatible Gradle distribution.
+- Confirm compatibility with the project's Android Gradle Plugin and Kotlin versions.
+- Use a documented JDK version.
+- Resolve dependency conflicts.
+- Remove unused dependencies where safe.
+- Keep dependencies pinned through the existing version catalog where practical.
+- Do not upgrade every dependency indiscriminately.
+- Configure debug builds without requiring a private release keystore.
+- Configure release signing through developer-supplied secrets.
+- Keep secrets out of Git.
+
+Do not fabricate wrapper files or replace a missing binary with an empty placeholder.
+
+Use a legitimate Gradle wrapper generated by the appropriate Gradle tooling.
+
+If the environment lacks Gradle, Android SDK components, or network access, state the limitation and provide the exact commands the developer must run elsewhere.
+
+# 17. P1: AUTOMATED BUILD AND QUALITY GATES
+
+Configure CI where the available repository platform supports it.
+
+At minimum, run:
+
+- Debug compilation.
+- Release compilation without exposing signing secrets.
+- Unit tests.
+- Lint checks.
+- Dependency validation where practical.
+- Static analysis supported by the existing project.
+- A check for accidentally committed credentials.
+
+CI must fail when a required quality gate fails.
+
+Do not label a release verified merely because a workflow file exists.
+
+Record the actual results of each run.
+
+# 18. P2: RELEASE READINESS
+
+Prepare the project for Google Play distribution.
+
+Inspect and document:
+
+- Application ID.
+- Version code.
+- Version name.
+- Minimum SDK.
+- Target SDK.
+- App label.
+- Launcher icons.
+- Theme and splash screen.
+- Network security configuration.
+- Release build type.
+- Code shrinking and resource optimization.
+- ProGuard or R8 rules.
+- Permissions.
+- Backup rules.
+- Privacy disclosures.
+- Data collection and sharing.
+- Content rating.
+- Testing requirements for new personal developer accounts.
+- Google Play target API requirements in effect at release time.
+
+Do not change the application ID casually. Changing it after publication can create a different Play Store listing.
+
+The existing ID is `com.aistudio.pulsehealth.kmpzq`. Review whether it is appropriate before release and document the decision. Do not silently rename it.
+
+Create a release checklist covering:
+
+- Final application ID.
+- Versioning.
+- App icon.
+- Screenshots.
+- Store description.
+- Privacy policy URL.
+- Support contact.
+- Data Safety form.
+- Content rating questionnaire.
+- App access instructions, if applicable.
+- Signing configuration.
+- Android App Bundle generation.
+- Internal testing.
+- Crash and startup verification.
+- Release notes.
+
+Do not invent a privacy policy URL, support address, developer identity, or legal statement.
+
+Clearly mark information the developer must provide.
+
+Generate an Android App Bundle only if the required build environment is available and the build succeeds.
+
+Never claim Google Play approval. Only Google can make that determination.
+
+# 19. PERFORMANCE AND STABILITY
+
+Audit and improve:
+
+- Startup time.
+- Database queries.
+- Unnecessary recompositions.
+- Excessive allocations.
+- Main-thread work.
+- Large image loading.
+- Memory leaks.
+- Coroutine cancellation.
+- Error propagation.
+- Network timeout handling.
+- App lifecycle behavior.
+- Background work.
+- Screen restoration.
+
+Avoid introducing complex caching or architecture changes without a measured need.
+
+The application should remain responsive on ordinary Android phones.
+
+Do not promise a specific performance result without measuring it.
+
+# 20. IMPLEMENTATION RULES
+
+These rules are mandatory.
+
+1. Modify the existing project.
+2. Preserve working functionality.
+3. Fix root causes instead of hiding symptoms.
+4. Do not replace actual data operations with fake UI state.
+5. Do not introduce unnecessary framework migrations.
+6. Do not embed privileged credentials in the client.
+7. Do not erase user data during upgrades.
+8. Do not present demo data as real health information.
+9. Do not claim integrations work when they are unconfigured.
+10. Do not mark placeholder features as complete.
+11. Do not suppress compiler errors to force a successful build.
+12. Do not delete tests merely because they fail.
+13. Do not generate fake build results.
+14. Do not claim device testing without testing on a device or emulator.
+15. Do not stop after producing a report.
+16. Do not stop after the first successful compilation.
+17. Work through the remediation list until all achievable tasks are implemented and verified.
+18. Keep changes focused and explain any significant architectural decisions.
+19. Maintain a changelog of important modifications.
+20. If context or execution limits interrupt the work, record completed tasks, outstanding tasks, and the exact next step so work can resume without restarting.
+
+# 21. EXECUTION ORDER
+
+Work in the following order.
+
+PHASE A: INSPECTION
+- Understand the entire existing project.
+- Establish the build baseline.
+- Identify all critical defects.
+
+PHASE B: SECURITY AND DATA INTEGRITY
+- Secure Gemini access.
+- Correct demo-data initialization.
+- Separate sample and real data.
+- Fix date storage.
+- Fix habit streaks.
+- Replace destructive migration behavior.
+
+PHASE C: APPLICATION LIFECYCLE
+- Repair onboarding.
+- Persist active workout sessions.
+- Correct personal records.
+- Repair navigation and state restoration.
+
+PHASE D: FEATURE COMPLETION
+- Complete nutrition.
+- Complete recovery and progress tracking.
+- Complete extension lifecycle and dependencies.
+- Complete settings and data management.
+- Finish AI error handling.
+
+PHASE E: TESTING
+- Add unit tests.
+- Add database tests.
+- Add ViewModel tests.
+- Add UI tests.
+- Test migration and persistence behavior.
+
+PHASE F: BUILD AND RELEASE
+- Restore the Gradle wrapper.
+- Verify dependency compatibility.
+- Run builds and tests.
+- Resolve compilation and lint errors.
+- Prepare release signing configuration.
+- Generate the release artifact if possible.
+- Document outstanding external requirements.
+
+After each phase, verify the changes before moving forward.
+
+If a blocker prevents a phase from completing, implement the safe portions that do not depend on that blocker and clearly document the remainder.
+
+# 22. FINAL ACCEPTANCE CRITERIA
+
+The project is ready for a release candidate only when the following are true:
+
+- The project can be built reproducibly.
+- The debug application compiles.
+- The release application compiles.
+- Automated tests pass, or every remaining failure is explicitly documented.
+- First-launch onboarding works.
+- Returning users go directly to the appropriate destination.
+- Sample data is not duplicated.
+- Sample data is clearly distinguished from real data.
+- Removing sample data preserves real records.
+- Dates are stored and ordered correctly.
+- Habit streaks are date-aware.
+- Database migrations preserve user information.
+- Active workouts survive process recreation.
+- Personal records follow documented rules.
+- Extensions can be enabled and disabled safely.
+- Dependencies are enforced.
+- Core functionality works offline.
+- AI failure does not break the rest of the application.
+- No privileged Gemini API key is embedded in the distributed APK.
+- No dead primary navigation controls remain.
+- Data deletion and privacy controls behave correctly.
+- Permissions are requested appropriately.
+- No known critical or high-severity defects remain unresolved.
+- Release signing is documented and configurable.
+- The release build has been verified in the available environment.
+- Outstanding external requirements are clearly identified.
+
+Do not describe the app as production-ready if any critical acceptance criterion remains unverified.
+
+# 23. REQUIRED FINAL REPORT
+
+When implementation is complete, produce a concise but detailed engineering report containing:
+
+1. Executive summary.
+2. Features preserved.
+3. Bugs fixed.
+4. Security improvements.
+5. Database and migration changes.
+6. UI and accessibility improvements.
+7. New tests.
+8. Actual build results.
+9. Actual test results.
+10. Actual lint results.
+11. Files changed.
+12. External credentials or services still required.
+13. Google Play setup tasks still requiring human action.
+14. Known limitations.
+15. Remaining risks, ranked by severity.
+16. Exact commands to build and test the application locally.
+17. Exact location of the generated release artifact, if one was successfully produced.
+
+Separate verified results from unverified assumptions.
+
+If the app cannot be built in the current environment, say so explicitly.
+
+Do not conclude with a list of future ideas instead of completing the engineering work.
+
+BEGIN BY INSPECTING THE EXISTING PROJECT, THEN IMPLEMENT THE HIGHEST-PRIORITY FIXES AND CONTINUE THROUGH THE ACCEPTANCE CRITERIA.

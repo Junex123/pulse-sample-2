@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Zero-trust root deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User profile document: strictly isolated by user's auth UID
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // User subcollections (workout_sessions, personal_records, custom_routines, habits, etc.)
+      match /{subcollection}/{docId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+  }
+}

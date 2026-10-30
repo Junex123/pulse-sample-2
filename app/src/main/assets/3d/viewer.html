@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+  <title>Pulse 3D Exercise Studio</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #090D16;
+    }
+    #canvas-container {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: #090D16;
+      color: #94A3B8;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      gap: 12px;
+      transition: opacity 0.3s ease;
+      z-index: 10;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(79, 70, 229, 0.2);
+      border-top-color: #6366F1;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <span id="loading-text">Loading 3D Skeletal Rig...</span>
+  </div>
+  <div id="canvas-container"></div>
+
+  <script src="three.min.js"></script>
+  <script src="GLTFLoader.js"></script>
+  <script src="OrbitControls.js"></script>
+  <script>
+    let scene, camera, renderer, controls;
+    let characterModel = null;
+    let equipmentGroup = null;
+    let mixer = null;
+    let clock = new THREE.Clock();
+    let animFrameId = null;
+    let isDisposed = false;
+    
+    // Playback state
+    let isPlaying = true;
+    let isLooping = true;
+    let playbackSpeed = 1.0;
+    let currentExerciseId = "barbell_bench_press";
+    let exerciseTime = 0;
+    let exerciseDuration = 3.2; // Seconds per full repetition
+
+    // Bone dictionary & rest transforms for reliable, non-drifting kinematics
+    const joints = {
+      root: null,
+      spine: null,
+      chest: null,
+      neck: null,
+      head: null,
+      leftShoulder: null,
+      leftUpperArm: null,
+      leftForearm: null,
+      rightShoulder: null,
+      rightUpperArm: null,
+      rightForearm: null,
+      leftHip: null,
+      leftKnee: null,
+      leftAnkle: null,
+      leftToes: null,
+      rightHip: null,
+      rightKnee: null,
+      rightAnkle: null,
+      rightToes: null
+    };
+
+    const restTransforms = {};
+
+    function init() {
+      const container = document.getElementById('canvas-container');
+      const width = container.clientWidth || window.innerWidth;
+      const height = container.clientHeight || window.innerHeight;
+
+      // 1. Scene
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x090D16);
+      scene.fog = new THREE.Fog(0x090D16, 5, 20);
+
+      // 2. Camera
+      camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+      camera.position.set(2.0, 1.35, 2.3);
+
+      // 3. Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      container.appendChild(renderer.domElement);
+
+      // 4. Orbit Controls (360 degree rotation with clamp limits)
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.target.set(0, 0.9, 0);
+      controls.maxPolarAngle = Math.PI * 0.88;
+      controls.minPolarAngle = 0.05;
+      controls.minDistance = 1.0;
+      controls.maxDistance = 6.0;
+
+      // 5. Studio Lighting
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+      scene.add(ambientLight);
+
+      const keyLight = new THREE.DirectionalLight(0xffffff, 0.95);
+      keyLight.position.set(2.5, 4.0, 3.0);
+      keyLight.castShadow = true;
+      keyLight.shadow.mapSize.width = 1024;
+      keyLight.shadow.mapSize.height = 1024;
+      scene.add(keyLight);
+
+      const rimLight = new THREE.DirectionalLight(0x6366F1, 0.7);
+      rimLight.position.set(-2.5, 3.0, -3.0);
+      scene.add(rimLight);
+
+      const cyanFillLight = new THREE.DirectionalLight(0x00E5FF, 0.4);
+      cyanFillLight.position.set(0, -1.0, 2.5);
+      scene.add(cyanFillLight);
+
+      // 6. Gym Floor & Platform
+      createGymFloor();
+
+      // 7. Equipment Container Group
+      equipmentGroup = new THREE.Group();
+      scene.add(equipmentGroup);
+
+      // 8. Load Human GLB Model
+      loadCharacterModel();
+
+      // Window resize
+      window.addEventListener('resize', onWindowResize);
+
+      // Start render loop
+      animate();
+    }
+
+    function createGymFloor() {
+      // Circular platform
+      const platformGeo = new THREE.CylinderGeometry(1.6, 1.7, 0.04, 32);
+      const platformMat = new THREE.MeshStandardMaterial({
+        color: 0x131A29,
+        roughness: 0.75,
+        metalness: 0.1
+      });
+      const platform = new THREE.Mesh(platformGeo, platformMat);
+      platform.position.y = -0.02;
+      platform.receiveShadow = true;
+      scene.add(platform);
+
+      // Accent ring
+      const ringGeo = new THREE.RingGeometry(1.45, 1.5, 32);
+      const ringMat = new THREE.MeshBasicMaterial({ color: 0x4F46E5, side: THREE.DoubleSide, transparent: true, opacity: 0.4 });
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.001;
+      scene.add(ring);
+
+      // Grid helper
+      const grid = new THREE.GridHelper(10, 20, 0x334155, 0x1E293B);
+      grid.position.y = -0.025;
+      scene.add(grid);
+    }
+
+    function loadCharacterModel() {
+      const loader = new THREE.GLTFLoader();
+      
+      loader.load(
+        '../models/human_character.glb',
+        function(gltf) {
+          characterModel = gltf.scene;
+          characterModel.position.set(0, 0, 0);
+          characterModel.scale.set(1.0, 1.0, 1.0);
+
+          // Traverse and map joints & materials
+          characterModel.traverse(function(node) {
+            if (node.isMesh) {
+              node.castShadow = true;
+              node.receiveShadow = true;
+              if (node.material) {
+                node.material.roughness = 0.6;
+                node.material.metalness = 0.1;
+              }
+            }
+            mapBoneNode(node);
+          });
+
+          // Store pristine rest transforms for all joints
+          recordRestTransforms(characterModel);
+
+          scene.add(characterModel);
+
+          // We explicitly DO NOT auto-play the embedded walk animation clip,
+          // because it runs concurrently and interferes with procedural exercises!
+          if (gltf.animations && gltf.animations.length > 0) {
+            mixer = new THREE.AnimationMixer(characterModel);
+            mixer.stopAllAction(); // Stop embedded walk animation to isolate exercise kinematics
+          }
+
+          // Build equipment for initial exercise
+          buildEquipmentForExercise(currentExerciseId);
+
+          // Hide loading overlay
+          const overlay = document.getElementById('loading-overlay');
+          if (overlay) {
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.style.display = 'none', 300);
+          }
+
+          // Notify Android Compose Bridge
+          if (window.AndroidBridge && window.AndroidBridge.onModelLoaded) {
+            const mappedJointCount = Object.keys(joints).filter(k => joints[k] !== null).length;
+            window.AndroidBridge.onModelLoaded(
+              "CesiumMan Rigged Human (CC-BY 4.0)",
+              mappedJointCount,
+              gltf.animations ? gltf.animations.length : 0
+            );
+          }
+        },
+        function(xhr) {
+          if (xhr.lengthComputable) {
+            const percent = Math.round((xhr.loaded / xhr.total) * 100);
+            const text = document.getElementById('loading-text');
+            if (text) text.innerText = 'Loading 3D Rig (' + percent + '%)...';
+          }
+        },
+        function(error) {
+          console.error("Error loading GLB:", error);
+          const text = document.getElementById('loading-text');
+          if (text) text.innerText = 'Falling back to biomechanical rig...';
+          if (window.AndroidBridge && window.AndroidBridge.onModelError) {
+            window.AndroidBridge.onModelError(error.toString());
+          }
+        }
+      );
+    }
+
+    function mapBoneNode(node) {
+      const name = node.name;
+      if (name === 'Skeleton_torso_joint_1') joints.root = node;
+      else if (name === 'Skeleton_torso_joint_2') joints.spine = node;
+      else if (name === 'torso_joint_3') joints.chest = node;
+      else if (name === 'Skeleton_neck_joint_1') joints.neck = node;
+      else if (name === 'Skeleton_neck_joint_2') joints.head = node;
+      // Left Arm Hierarchy
+      else if (name === 'Skeleton_arm_joint_L__4_') joints.leftShoulder = node;
+      else if (name === 'Skeleton_arm_joint_L__3_') joints.leftUpperArm = node;
+      else if (name === 'Skeleton_arm_joint_L__2_') joints.leftForearm = node;
+      // Right Arm Hierarchy
+      else if (name === 'Skeleton_arm_joint_R') joints.rightShoulder = node;
+      else if (name === 'Skeleton_arm_joint_R__2_') joints.rightUpperArm = node;
+      else if (name === 'Skeleton_arm_joint_R__3_') joints.rightForearm = node;
+      // Left Leg Hierarchy
+      else if (name === 'leg_joint_L_1') joints.leftHip = node;
+      else if (name === 'leg_joint_L_2') joints.leftKnee = node;
+      else if (name === 'leg_joint_L_3') joints.leftAnkle = node;
+      else if (name === 'leg_joint_L_5') joints.leftToes = node;
+      // Right Leg Hierarchy
+      else if (name === 'leg_joint_R_1') joints.rightHip = node;
+      else if (name === 'leg_joint_R_2') joints.rightKnee = node;
+      else if (name === 'leg_joint_R_3') joints.rightAnkle = node;
+      else if (name === 'leg_joint_R_5') joints.rightToes = node;
+    }
+
+    function recordRestTransforms(root) {
+      root.traverse(function(node) {
+        if (node.isBone || node.name.startsWith('Skeleton_') || node.name.startsWith('leg_') || node.name.startsWith('torso_')) {
+          restTransforms[node.name] = {
+            position: node.position.clone(),
+            quaternion: node.quaternion.clone(),
+            rotation: node.rotation.clone()
+          };
+        }
+      });
+    }
+
+    function resetSkeletonToNeutral() {
+      if (!characterModel) return;
+      characterModel.position.set(0, 0, 0);
+      characterModel.rotation.set(0, 0, 0);
+
+      for (const name in restTransforms) {
+        const node = characterModel.getObjectByName(name);
+        if (node) {
+          node.position.copy(restTransforms[name].position);
+          node.quaternion.copy(restTransforms[name].quaternion);
+        }
+      }
+    }
+
+    // =========================================================================
+    // 3D EQUIPMENT FACTORY & DYNAMIC ATTACHMENTS
+    // =========================================================================
+    function clearEquipment() {
+      while (equipmentGroup.children.length > 0) {
+        const obj = equipmentGroup.children[0];
+        equipmentGroup.remove(obj);
+        if (obj.geometry) obj.geometry.dispose();
+        if (obj.material) {
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+          else obj.material.dispose();
+        }
+      }
+    }
+
+    // Common shared materials
+    const chromeMat = new THREE.MeshStandardMaterial({ color: 0xD4D4D8, metalness: 0.85, roughness: 0.25 });
+    const rubberMat = new THREE.MeshStandardMaterial({ color: 0x18181B, roughness: 0.75, metalness: 0.1 });
+    const redAccentMat = new THREE.MeshStandardMaterial({ color: 0xEF4444, roughness: 0.4 });
+    const blueAccentMat = new THREE.MeshStandardMaterial({ color: 0x3B82F6, roughness: 0.4 });
+    const benchLeatherMat = new THREE.MeshStandardMaterial({ color: 0x0F172A, roughness: 0.5, metalness: 0.1 });
+    const steelFrameMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.6, roughness: 0.4 });
+
+    function createBarbellMesh() {
+      const group = new THREE.Group();
+      // Steel Bar shaft (2.1m)
+      const barGeo = new THREE.CylinderGeometry(0.015, 0.015, 2.1, 16);
+      const barMesh = new THREE.Mesh(barGeo, chromeMat);
+      barMesh.rotation.z = Math.PI / 2;
+      barMesh.castShadow = true;
+      group.add(barMesh);
+
+      // Left & Right Olympic 45lb/20kg bumper plates
+      [-0.75, -0.82, 0.75, 0.82].forEach((xOffset, i) => {
+        const plateGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.045, 24);
+        const plateMesh = new THREE.Mesh(plateGeo, (i % 2 === 0) ? rubberMat : redAccentMat);
+        plateMesh.rotation.z = Math.PI / 2;
+        plateMesh.position.x = xOffset;
+        plateMesh.castShadow = true;
+        group.add(plateMesh);
+      });
+
+      return group;
+    }
+
+    function createDumbbellMesh() {
+      const group = new THREE.Group();
+      // Handle
+      const handleGeo = new THREE.CylinderGeometry(0.014, 0.014, 0.16, 16);
+      const handleMesh = new THREE.Mesh(handleGeo, chromeMat);
+      handleMesh.rotation.x = Math.PI / 2;
+      group.add(handleMesh);
+
+      // Hexagonal heads
+      [-0.09, 0.09].forEach(zOffset => {
+        const headGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.06, 6);
+        const headMesh = new THREE.Mesh(headGeo, rubberMat);
+        headMesh.position.z = zOffset;
+        headMesh.rotation.x = Math.PI / 2;
+        headMesh.castShadow = true;
+        group.add(headMesh);
+      });
+
+      return group;
+    }
+
+    function createFlatBenchMesh() {
+      const group = new THREE.Group();
+      // Main horizontal leather pad
+      const padGeo = new THREE.BoxGeometry(0.32, 0.08, 1.25);
+      const padMesh = new THREE.Mesh(padGeo, benchLeatherMat);
+      padMesh.position.set(0, 0.44, 0.0);
+      padMesh.castShadow = true;
+      padMesh.receiveShadow = true;
+      group.add(padMesh);
+
+      // Steel frame base & legs
+      const frameGeo = new THREE.BoxGeometry(0.06, 0.40, 0.06);
+      const leg1 = new THREE.Mesh(frameGeo, steelFrameMat);
+      leg1.position.set(0, 0.20, 0.48);
+      const leg2 = new THREE.Mesh(frameGeo, steelFrameMat);
+      leg2.position.set(0, 0.20, -0.48);
+      group.add(leg1);
+      group.add(leg2);
+
+      const footGeo = new THREE.BoxGeometry(0.40, 0.04, 0.08);
+      const foot1 = new THREE.Mesh(footGeo, steelFrameMat);
+      foot1.position.set(0, 0.02, 0.48);
+      const foot2 = new THREE.Mesh(footGeo, steelFrameMat);
+      foot2.position.set(0, 0.02, -0.48);
+      group.add(foot1);
+      group.add(foot2);
+
+      return group;
+    }
+
+    function createInclineBenchMesh() {
+      const group = new THREE.Group();
+      // Inclined Back pad (~35 degrees)
+      const backPadGeo = new THREE.BoxGeometry(0.32, 0.08, 0.90);
+      const backPadMesh = new THREE.Mesh(backPadGeo, benchLeatherMat);
+      backPadMesh.position.set(0, 0.62, -0.05);
+      backPadMesh.rotation.x = 0.60; // ~35 degrees incline
+      backPadMesh.castShadow = true;
+      group.add(backPadMesh);
+
+      // Seat pad
+      const seatPadGeo = new THREE.BoxGeometry(0.32, 0.08, 0.35);
+      const seatPadMesh = new THREE.Mesh(seatPadGeo, benchLeatherMat);
+      seatPadMesh.position.set(0, 0.44, 0.35);
+      seatPadMesh.rotation.x = -0.15;
+      group.add(seatPadMesh);
+
+      // Support frame
+      const frameGeo = new THREE.BoxGeometry(0.06, 0.44, 0.06);
+      const leg = new THREE.Mesh(frameGeo, steelFrameMat);
+      leg.position.set(0, 0.22, 0.20);
+      group.add(leg);
+
+      return group;
+    }
+
+    function createLatStationMesh() {
+      const group = new THREE.Group();
+      // Overhead crossbeam
+      const beamGeo = new THREE.BoxGeometry(0.08, 0.08, 1.2);
+      const beam = new THREE.Mesh(beamGeo, steelFrameMat);
+      beam.position.set(0, 2.35, 0.2);
+      group.add(beam);
+
+      // Vertical support tower
+      const towerGeo = new THREE.BoxGeometry(0.12, 2.4, 0.12);
+      const tower = new THREE.Mesh(towerGeo, steelFrameMat);
+      tower.position.set(0, 1.2, -0.4);
+      group.add(tower);
+
+      // Pulley wheel
+      const pulleyGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.03, 16);
+      const pulley = new THREE.Mesh(pulleyGeo, chromeMat);
+      pulley.rotation.z = Math.PI / 2;
+      pulley.position.set(0, 2.30, 0.1);
+      group.add(pulley);
+
+      // Seat
+      const seatGeo = new THREE.BoxGeometry(0.35, 0.08, 0.45);
+      const seat = new THREE.Mesh(seatGeo, benchLeatherMat);
+      seat.position.set(0, 0.45, 0.05);
+      group.add(seat);
+
+      // Thigh hold-down roller
+      const rollerGeo = new THREE.CylinderGeometry(0.055, 0.055, 0.45, 16);
+      const roller = new THREE.Mesh(rollerGeo, rubberMat);
+      roller.rotation.z = Math.PI / 2;
+      roller.position.set(0, 0.65, 0.25);
+      group.add(roller);
+
+      return group;
+    }
+
+    function createLatBarMesh() {
+      const group = new THREE.Group();
+      // Wide lat pulldown bar (1.2m wide with angled outer handles)
+      const centerGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.8, 16);
+      const centerBar = new THREE.Mesh(centerGeo, chromeMat);
+      centerBar.rotation.z = Math.PI / 2;
+      group.add(centerBar);
+
+      [-0.45, 0.45].forEach((xOffset, idx) => {
+        const handleGeo = new THREE.CylinderGeometry(0.016, 0.016, 0.25, 16);
+        const handle = new THREE.Mesh(handleGeo, rubberMat);
+        handle.position.x = xOffset;
+        handle.rotation.z = (idx === 0) ? (Math.PI / 2 - 0.25) : (Math.PI / 2 + 0.25);
+        group.add(handle);
+      });
+
+      return group;
+    }
+
+    function createCableRowStationMesh() {
+      const group = new THREE.Group();
+      // Bench seat
+      const bench = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.08, 1.1), benchLeatherMat);
+      bench.position.set(0, 0.42, -0.1);
+      group.add(bench);
+
+      // Foot plates
+      const footPlate = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.28, 0.04), steelFrameMat);
+      footPlate.position.set(0, 0.48, 0.58);
+      footPlate.rotation.x = 0.35;
+      group.add(footPlate);
+
+      // Low Pulley block
+      const pulley = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.03, 16), chromeMat);
+      pulley.rotation.z = Math.PI / 2;
+      pulley.position.set(0, 0.42, 0.68);
+      group.add(pulley);
+
+      return group;
+    }
+
+    function createVHandleMesh() {
+      const group = new THREE.Group();
+      // V-bar / close grip handle
+      const h1 = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.20, 16), chromeMat);
+      h1.rotation.z = 0.35;
+      h1.position.x = -0.06;
+      const h2 = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.20, 16), chromeMat);
+      h2.rotation.z = -0.35;
+      h2.position.x = 0.06;
+      group.add(h1);
+      group.add(h2);
+      return group;
+    }
+
+    function createCableRopeMesh() {
+      const group = new THREE.Group();
+      // Braided rope strands
+      [-0.06, 0.06].forEach((x, i) => {
+        const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.35, 12), new THREE.MeshStandardMaterial({ color: 0xE2E8F0, roughness: 0.9 }));
+        rope.position.set(x, -0.15, 0);
+        rope.rotation.z = (i === 0) ? 0.35 : -0.35;
+        group.add(rope);
+
+        // Rubber stopper ball at end
+        const ball = new THREE.Mesh(new THREE.SphereGeometry(0.038, 16, 16), rubberMat);
+        ball.position.set(x * 2.2, -0.32, 0);
+        group.add(ball);
+      });
+      return group;
+    }
+
+    function createCalfBlockMesh() {
+      const group = new THREE.Group();
+      const block = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.10, 0.30), steelFrameMat);
+      block.position.set(0, 0.05, -0.05);
+      block.receiveShadow = true;
+      group.add(block);
+      return group;
+    }
+
+    function createMatMesh() {
+      const group = new THREE.Group();
+      const mat = new THREE.Mesh(new THREE.BoxGeometry(0.70, 0.02, 1.80), new THREE.MeshStandardMaterial({ color: 0x4F46E5, roughness: 0.85 }));
+      mat.position.set(0, 0.01, 0);
+      mat.receiveShadow = true;
+      group.add(mat);
+      return group;
+    }
+
+    // Dynamic equipment references updated inside animate loop
+    let activeBarbell = null;
+    let activeLeftDumbbell = null;
+    let activeRightDumbbell = null;
+    let activeLatBar = null;
+    let activeVHandle = null;
+    let activeCableRope = null;
+
+    function buildEquipmentForExercise(exerciseId) {
+      clearEquipment();
+      activeBarbell = null;
+      activeLeftDumbbell = null;
+      activeRightDumbbell = null;
+      activeLatBar = null;
+      activeVHandle = null;
+      activeCableRope = null;
+
+      switch (exerciseId) {
+        case 'barbell_bench_press':
+          equipmentGroup.add(createFlatBenchMesh());
+          activeBarbell = createBarbellMesh();
+          equipmentGroup.add(activeBarbell);
+          break;
+
+        case 'incline_dumbbell_press':
+          equipmentGroup.add(createInclineBenchMesh());
+          activeLeftDumbbell = createDumbbellMesh();
+          activeRightDumbbell = createDumbbellMesh();
+          equipmentGroup.add(activeLeftDumbbell);
+          equipmentGroup.add(activeRightDumbbell);
+          break;
+
+        case 'lateral_raise':
+        case 'arnold_press':
+        case 'bicep_curl':
+          activeLeftDumbbell = createDumbbellMesh();
+          activeRightDumbbell = createDumbbellMesh();
+          equipmentGroup.add(activeLeftDumbbell);
+          equipmentGroup.add(activeRightDumbbell);
+          break;
+
+        case 'lat_pulldown':
+          equipmentGroup.add(createLatStationMesh());
+          activeLatBar = createLatBarMesh();
+          equipmentGroup.add(activeLatBar);
+          break;
+
+        case 'seated_cable_row':
+          equipmentGroup.add(createCableRowStationMesh());
+          activeVHandle = createVHandleMesh();
+          equipmentGroup.add(activeVHandle);
+          break;
+
+        case 'barbell_squat':
+        case 'romanian_deadlift':
+          activeBarbell = createBarbellMesh();
+          equipmentGroup.add(activeBarbell);
+          break;
+
+        case 'leg_extension':
+        case 'leg_curl':
+          equipmentGroup.add(createFlatBenchMesh());
+          break;
+
+        case 'calf_raises':
+          equipmentGroup.add(createCalfBlockMesh());
+          break;
+
+        case 'plank':
+          equipmentGroup.add(createMatMesh());
+          break;
+      }
+    }
+
+    // =========================================================================
+    // EXERCISE BIOMECHANICAL ANIMATION ENGINE (ALL 14 EXERCISES)
+    // =========================================================================
+    function animate() {
+      if (isDisposed) return;
+      animFrameId = requestAnimationFrame(animate);
+
+      const delta = clock.getDelta();
+
+      if (isPlaying && characterModel) {
+        exerciseTime += delta * playbackSpeed;
+        const progress = (exerciseTime % exerciseDuration) / exerciseDuration;
+
+        // Reset skeleton to exact neutral rest pose before applying frame kinematics
+        resetSkeletonToNeutral();
+
+        // Apply dedicated biomechanical kinematics for the current exercise
+        applyExerciseBiomechanics(progress);
+
+        // Update bridge with phase & progress
+        if (window.AndroidBridge && window.AndroidBridge.onProgressUpdate) {
+          const phase = getPhaseName(progress);
+          window.AndroidBridge.onProgressUpdate(progress, phase);
+        }
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    function applyExerciseBiomechanics(progress) {
+      // Smooth sinusoidal cycle: 0 -> 1 -> 0 (continuous acceleration & deceleration)
+      const wave = 0.5 - 0.5 * Math.cos(progress * 2 * Math.PI);
+
+      switch (currentExerciseId) {
+        // -------------------------------------------------------------
+        // 1. CHEST: Barbell Bench Press (Supine on bench, bar chest to lockout)
+        // -------------------------------------------------------------
+        case 'barbell_bench_press': {
+          // Model lies supine (back flat on bench)
+          characterModel.position.set(0, 0.48, 0.15);
+          characterModel.rotation.x = -Math.PI / 2;
+
+          // Legs bent down to floor
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -0.55;
+            joints.rightHip.rotation.x = -0.55;
+          }
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 1.35;
+            joints.rightKnee.rotation.x = 1.35;
+          }
+
+          // Arms press barbell from chest (wave=1) up to lockout (wave=0)
+          // At wave=0 (lockout): arms extended forward. At wave=1: elbows flexed ~85°, upper arms lower
+          const pressFactor = 1.0 - wave; // 0 = chest, 1 = lockout
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 0.45 + 0.65 * pressFactor;
+            joints.rightUpperArm.rotation.x = 0.45 + 0.65 * pressFactor;
+            joints.leftUpperArm.rotation.z = -0.50 + 0.25 * pressFactor;
+            joints.rightUpperArm.rotation.z = 0.50 - 0.25 * pressFactor;
+          }
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 0.25 * (1.0 - pressFactor);
+            joints.rightForearm.rotation.x = 0.25 * (1.0 - pressFactor);
+          }
+
+          // Track Barbell to hand position (Y: 0.68 at chest to 1.08 at lockout)
+          if (activeBarbell) {
+            const barY = 0.68 + 0.40 * pressFactor;
+            activeBarbell.position.set(0, barY, 0.12);
+            activeBarbell.rotation.set(0, 0, 0);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 2. CHEST: Incline Dumbbell Press (Inclined bench, convergent arc)
+        // -------------------------------------------------------------
+        case 'incline_dumbbell_press': {
+          // Seated on 35-degree incline
+          characterModel.position.set(0, 0.48, 0.10);
+          characterModel.rotation.x = -0.60;
+
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -0.85;
+            joints.rightHip.rotation.x = -0.85;
+          }
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 1.25;
+            joints.rightKnee.rotation.x = 1.25;
+          }
+
+          const pressFactor = 1.0 - wave; // 0 = chest stretch, 1 = overhead press
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 0.40 + 0.70 * pressFactor;
+            joints.rightUpperArm.rotation.x = 0.40 + 0.70 * pressFactor;
+            joints.leftUpperArm.rotation.z = -0.55 + 0.35 * pressFactor;
+            joints.rightUpperArm.rotation.z = 0.55 - 0.35 * pressFactor;
+          }
+
+          // Converging dumbbell path
+          if (activeLeftDumbbell && activeRightDumbbell) {
+            const yPos = 0.82 + 0.42 * pressFactor;
+            const zPos = 0.05 - 0.25 * pressFactor;
+            const xSep = 0.36 - 0.16 * pressFactor; // Converging closer together at top
+            activeLeftDumbbell.position.set(-xSep, yPos, zPos);
+            activeRightDumbbell.position.set(xSep, yPos, zPos);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 3. SHOULDERS: Dumbbell Lateral Raise (90° lateral abduction)
+        // -------------------------------------------------------------
+        case 'lateral_raise': {
+          characterModel.position.set(0, 0, 0);
+
+          // Arms abduct outward from sides (wave=0) up to 90 degrees (wave=1)
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.z = -0.15 - 1.35 * wave;
+            joints.rightUpperArm.rotation.z = 0.15 + 1.35 * wave;
+            joints.leftUpperArm.rotation.y = 0.20 * wave; // Slight scapular plane lead
+            joints.rightUpperArm.rotation.y = -0.20 * wave;
+          }
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 0.15; // Soft unlocked elbow
+            joints.rightForearm.rotation.x = 0.15;
+          }
+
+          // Dumbbells track hands along lateral arc
+          if (activeLeftDumbbell && activeRightDumbbell) {
+            const xOffset = 0.26 + 0.46 * wave;
+            const yOffset = 0.75 + 0.55 * wave;
+            activeLeftDumbbell.position.set(-xOffset, yOffset, 0.05 * wave);
+            activeRightDumbbell.position.set(xOffset, yOffset, 0.05 * wave);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 4. SHOULDERS: Arnold Press (Supinated start, rotating press)
+        // -------------------------------------------------------------
+        case 'arnold_press': {
+          characterModel.position.set(0, 0, 0);
+
+          // Press factor: 0 = starting at shoulders (supinated), 1 = overhead lockout (pronated)
+          const pressFactor = wave;
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 0.60 + 0.85 * pressFactor;
+            joints.rightUpperArm.rotation.x = 0.60 + 0.85 * pressFactor;
+            joints.leftUpperArm.rotation.z = 0.25 - 0.45 * pressFactor; // Flaring outward
+            joints.rightUpperArm.rotation.z = -0.25 + 0.45 * pressFactor;
+            joints.leftUpperArm.rotation.y = -0.65 * (1.0 - pressFactor); // Rotation
+            joints.rightUpperArm.rotation.y = 0.65 * (1.0 - pressFactor);
+          }
+
+          if (activeLeftDumbbell && activeRightDumbbell) {
+            const yPos = 1.25 + 0.60 * pressFactor;
+            const xSep = 0.18 + 0.18 * pressFactor;
+            activeLeftDumbbell.position.set(-xSep, yPos, 0.12 - 0.10 * pressFactor);
+            activeRightDumbbell.position.set(xSep, yPos, 0.12 - 0.10 * pressFactor);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 5. BACK: Lat Pulldown (Overhead bar pulled to collarbone)
+        // -------------------------------------------------------------
+        case 'lat_pulldown': {
+          characterModel.position.set(0, 0.42, 0.05);
+
+          // Seated
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -1.25;
+            joints.rightHip.rotation.x = -1.25;
+          }
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 1.35;
+            joints.rightKnee.rotation.x = 1.35;
+          }
+          if (joints.spine) {
+            joints.spine.rotation.x = -0.15; // Slight 10-degree lean
+          }
+
+          // Arms: wave=0 (overhead stretch) to wave=1 (pulled down to upper chest)
+          const pullDown = wave;
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 1.45 - 0.95 * pullDown;
+            joints.rightUpperArm.rotation.x = 1.45 - 0.95 * pullDown;
+            joints.leftUpperArm.rotation.z = -0.45 + 0.85 * pullDown; // Elbows adduct in & back
+            joints.rightUpperArm.rotation.z = 0.45 - 0.85 * pullDown;
+          }
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 0.20 + 0.80 * pullDown;
+            joints.rightForearm.rotation.x = 0.20 + 0.80 * pullDown;
+          }
+
+          // Lat bar travels vertically from y=2.15 down to y=1.45
+          if (activeLatBar) {
+            const barY = 2.15 - 0.70 * pullDown;
+            activeLatBar.position.set(0, barY, 0.15 + 0.05 * pullDown);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 6. BACK: Seated Cable Row (Row handle to navel, elbows driven back)
+        // -------------------------------------------------------------
+        case 'seated_cable_row': {
+          characterModel.position.set(0, 0.42, -0.15);
+
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -1.20;
+            joints.rightHip.rotation.x = -1.20;
+          }
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 0.45; // Soft knee bend
+            joints.rightKnee.rotation.x = 0.45;
+          }
+
+          // Row cycle: wave=0 (extended stretch), wave=1 (handle pulled to abdomen)
+          const rowFactor = wave;
+          if (joints.spine) {
+            joints.spine.rotation.x = 0.20 * (1.0 - rowFactor) - 0.10 * rowFactor;
+          }
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 0.80 * (1.0 - rowFactor) - 0.35 * rowFactor;
+            joints.rightUpperArm.rotation.x = 0.80 * (1.0 - rowFactor) - 0.35 * rowFactor;
+            joints.leftUpperArm.rotation.z = -0.15;
+            joints.rightUpperArm.rotation.z = 0.15;
+          }
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 0.15 + 0.95 * rowFactor;
+            joints.rightForearm.rotation.x = 0.15 + 0.95 * rowFactor;
+          }
+
+          // V-handle follows hand position along Z
+          if (activeVHandle) {
+            const handleZ = 0.45 - 0.42 * rowFactor;
+            activeVHandle.position.set(0, 0.82, handleZ);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 7. LEGS: Barbell Squat (Hips/knees flex to parallel, bar on traps)
+        // -------------------------------------------------------------
+        case 'barbell_squat': {
+          const depth = wave; // 0 = standing, 1 = parallel bottom
+
+          // Root hips sink down
+          if (joints.root) {
+            joints.root.position.y = -0.42 * depth;
+            joints.root.position.z = -0.12 * depth;
+          }
+          if (joints.spine) {
+            joints.spine.rotation.x = 0.42 * depth; // Torso incline over center of mass
+          }
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -1.25 * depth;
+            joints.rightHip.rotation.x = -1.25 * depth;
+            joints.leftHip.rotation.z = -0.18; // Slight foot turnout
+            joints.rightHip.rotation.z = 0.18;
+          }
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 1.55 * depth;
+            joints.rightKnee.rotation.x = 1.55 * depth;
+          }
+          if (joints.leftAnkle && joints.rightAnkle) {
+            joints.leftAnkle.rotation.x = -0.35 * depth;
+            joints.rightAnkle.rotation.x = -0.35 * depth;
+          }
+
+          // Hands grasp barbell behind neck
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.z = -0.75;
+            joints.rightUpperArm.rotation.z = 0.75;
+            joints.leftUpperArm.rotation.x = -0.25;
+            joints.rightUpperArm.rotation.x = -0.25;
+          }
+
+          // Barbell resting across upper traps
+          if (activeBarbell) {
+            const barY = 1.48 - 0.42 * depth;
+            const barZ = -0.04 - 0.08 * depth;
+            activeBarbell.position.set(0, barY, barZ);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 8. LEGS: Romanian Deadlift (Hip hinge back, soft 15° knees, bar skims shins)
+        // -------------------------------------------------------------
+        case 'romanian_deadlift': {
+          const hinge = wave; // 0 = upright, 1 = deep hamstring stretch
+
+          if (joints.root) {
+            joints.root.position.z = -0.28 * hinge; // Pelvis shifts backward
+            joints.root.position.y = -0.10 * hinge;
+          }
+          if (joints.spine) {
+            joints.spine.rotation.x = 1.15 * hinge; // Torso hinges forward
+          }
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -1.05 * hinge;
+            joints.rightHip.rotation.x = -1.05 * hinge;
+          }
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 0.28 * hinge; // Fixed soft knee (~15 degrees)
+            joints.rightKnee.rotation.x = 0.28 * hinge;
+          }
+
+          // Arms hang vertically with overhand grip
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = -0.85 * hinge;
+            joints.rightUpperArm.rotation.x = -0.85 * hinge;
+          }
+
+          // Barbell skims thighs/shins downward
+          if (activeBarbell) {
+            const barY = 0.78 - 0.42 * hinge;
+            const barZ = 0.16 + 0.08 * hinge;
+            activeBarbell.position.set(0, barY, barZ);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 9. LEGS: Leg Extension (Seated, knees extend from 90° to horizontal lockout)
+        // -------------------------------------------------------------
+        case 'leg_extension': {
+          characterModel.position.set(0, 0.44, 0.0);
+
+          // Seated with hips at 90 degrees
+          if (joints.leftHip && joints.rightHip) {
+            joints.leftHip.rotation.x = -1.35;
+            joints.rightHip.rotation.x = -1.35;
+          }
+
+          // Extension cycle: wave=0 (90° flexed), wave=1 (full horizontal quad lockout)
+          const extFactor = wave;
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 1.45 * (1.0 - extFactor);
+            joints.rightKnee.rotation.x = 1.45 * (1.0 - extFactor);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 10. LEGS: Leg Curl (Prone lying face-down, heels curl to glutes)
+        // -------------------------------------------------------------
+        case 'leg_curl': {
+          characterModel.position.set(0, 0.48, 0.10);
+          characterModel.rotation.x = Math.PI / 2; // Lying prone face down
+
+          // Curl cycle: wave=0 (straight legs), wave=1 (heels curled to glutes)
+          const curlFactor = wave;
+          if (joints.leftKnee && joints.rightKnee) {
+            joints.leftKnee.rotation.x = 1.85 * curlFactor;
+            joints.rightKnee.rotation.x = 1.85 * curlFactor;
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 11. LEGS: Calf Raises (Stretch below block into peak plantarflexion)
+        // -------------------------------------------------------------
+        case 'calf_raises': {
+          characterModel.position.set(0, 0.10, 0);
+
+          // Raise cycle: wave=0 (dorsiflexion stretch), wave=1 (peak plantarflexion)
+          const calfRaise = wave;
+          if (joints.root) {
+            joints.root.position.y = 0.16 * calfRaise; // Entire body elevates
+          }
+          if (joints.leftAnkle && joints.rightAnkle) {
+            joints.leftAnkle.rotation.x = -0.30 * (1.0 - calfRaise) + 0.65 * calfRaise;
+            joints.rightAnkle.rotation.x = -0.30 * (1.0 - calfRaise) + 0.65 * calfRaise;
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 12. BICEPS: Biceps Curl (Elbows pinned to sides, forearms curl with supination)
+        // -------------------------------------------------------------
+        case 'bicep_curl': {
+          characterModel.position.set(0, 0, 0);
+
+          const curlFactor = wave; // 0 = bottom, 1 = top curl peak
+          // Upper arms pinned against ribcage
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 0.10;
+            joints.rightUpperArm.rotation.x = 0.10;
+            joints.leftUpperArm.rotation.z = -0.12;
+            joints.rightUpperArm.rotation.z = 0.12;
+          }
+          // Forearms curl upward
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 0.15 + 1.85 * curlFactor;
+            joints.rightForearm.rotation.x = 0.15 + 1.85 * curlFactor;
+          }
+
+          // Dumbbells track hands along circular arc
+          if (activeLeftDumbbell && activeRightDumbbell) {
+            const yPos = 0.72 + 0.45 * curlFactor;
+            const zPos = 0.05 + 0.28 * Math.sin(curlFactor * Math.PI * 0.85);
+            activeLeftDumbbell.position.set(-0.25, yPos, zPos);
+            activeRightDumbbell.position.set(0.25, yPos, zPos);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 13. TRICEPS: Triceps Rope Pushdown (Elbows at 90°, extend & flare rope)
+        // -------------------------------------------------------------
+        case 'tricep_rope_pushdown': {
+          characterModel.position.set(0, 0, 0);
+
+          if (joints.spine) {
+            joints.spine.rotation.x = 0.22; // Athletic forward hinge
+          }
+
+          const pushFactor = wave; // 0 = 90° bend, 1 = full extension & flare
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = 0.20;
+            joints.rightUpperArm.rotation.x = 0.20;
+            joints.leftUpperArm.rotation.z = -0.15 - 0.20 * pushFactor;
+            joints.rightUpperArm.rotation.z = 0.15 + 0.20 * pushFactor;
+          }
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 1.45 * (1.0 - pushFactor);
+            joints.rightForearm.rotation.x = 1.45 * (1.0 - pushFactor);
+          }
+
+          if (activeCableRope) {
+            const ropeY = 1.05 - 0.35 * pushFactor;
+            activeCableRope.position.set(0, ropeY, 0.25);
+          }
+          break;
+        }
+
+        // -------------------------------------------------------------
+        // 14. CORE: Plank (Stable prone isometric plank, NO artificial cycling)
+        // -------------------------------------------------------------
+        case 'plank': {
+          // Stable horizontal prone plank on forearms and toes
+          characterModel.position.set(0, 0.22, 0.15);
+          characterModel.rotation.x = Math.PI / 2; // Flat prone line
+
+          // Forearms propped on floor mat
+          if (joints.leftUpperArm && joints.rightUpperArm) {
+            joints.leftUpperArm.rotation.x = -1.15;
+            joints.rightUpperArm.rotation.x = -1.15;
+          }
+          if (joints.leftForearm && joints.rightForearm) {
+            joints.leftForearm.rotation.x = 1.35;
+            joints.rightForearm.rotation.x = 1.35;
+          }
+
+          // Subtle rhythmic breathing heave (no artificial repetition cycling!)
+          const breath = Math.sin(exerciseTime * 2.2) * 0.015;
+          if (joints.spine) {
+            joints.spine.rotation.x = breath;
+          }
+          break;
+        }
+
+        default:
+          break;
+      }
+    }
+
+    function getPhaseName(progress) {
+      if (currentExerciseId === 'plank') {
+        return "Isometric Core Brace & Hold";
+      }
+      if (progress < 0.20) return "Setup & Starting Position";
+      if (progress < 0.50) return "Eccentric Phase (Controlled Lowering)";
+      if (progress < 0.60) return "Peak Turnaround Point";
+      if (progress < 0.90) return "Concentric Drive Phase";
+      return "Lockout & Reset";
+    }
+
+    function onWindowResize() {
+      if (isDisposed) return;
+      const container = document.getElementById('canvas-container');
+      const width = container.clientWidth || window.innerWidth;
+      const height = container.clientHeight || window.innerHeight;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    }
+
+    // =========================================================================
+    // EXPOSED JAVASCRIPT API FOR ANDROID VIEW & VIEWMODEL
+    // =========================================================================
+    window.togglePlayPause = function() {
+      isPlaying = !isPlaying;
+      return isPlaying;
+    };
+
+    window.play = function() {
+      isPlaying = true;
+    };
+
+    window.pause = function() {
+      isPlaying = false;
+    };
+
+    window.restart = function() {
+      exerciseTime = 0;
+      isPlaying = true;
+    };
+
+    window.setSpeed = function(speed) {
+      playbackSpeed = parseFloat(speed);
+    };
+
+    window.setExercise = function(exerciseId) {
+      if (currentExerciseId !== exerciseId) {
+        currentExerciseId = exerciseId;
+        exerciseTime = 0;
+        resetSkeletonToNeutral();
+        buildEquipmentForExercise(exerciseId);
+      }
+    };
+
+    window.setCameraPreset = function(preset) {
+      switch (preset) {
+        case 'front':
+          camera.position.set(0, 1.25, 3.2);
+          controls.target.set(0, 0.9, 0);
+          break;
+        case 'angle':
+        case '45':
+          camera.position.set(2.0, 1.35, 2.3);
+          controls.target.set(0, 0.9, 0);
+          break;
+        case 'side':
+          camera.position.set(3.2, 1.15, 0);
+          controls.target.set(0, 0.9, 0);
+          break;
+        case 'rear':
+          camera.position.set(0, 1.25, -3.2);
+          controls.target.set(0, 0.9, 0);
+          break;
+        case 'top':
+          camera.position.set(0.01, 3.6, 0.6);
+          controls.target.set(0, 0.7, 0);
+          break;
+        case 'reset':
+          camera.position.set(2.0, 1.35, 2.3);
+          controls.target.set(0, 0.9, 0);
+          break;
+      }
+      controls.update();
+    };
+
+    window.resetCamera = function() {
+      window.setCameraPreset('reset');
+    };
+
+    window.seekProgress = function(fraction) {
+      exerciseTime = fraction * exerciseDuration;
+    };
+
+    window.cleanupViewer = function() {
+      isDisposed = true;
+      if (animFrameId) {
+        cancelAnimationFrame(animFrameId);
+        animFrameId = null;
+      }
+      window.removeEventListener('resize', onWindowResize);
+      clearEquipment();
+
+      if (scene) {
+        scene.traverse(function(node) {
+          if (node.geometry) node.geometry.dispose();
+          if (node.material) {
+            if (Array.isArray(node.material)) node.material.forEach(m => m.dispose());
+            else node.material.dispose();
+          }
+        });
+      }
+
+      if (renderer) {
+        renderer.dispose();
+        renderer.forceContextLoss();
+      }
+    };
+
+    // Initialize once DOM is ready
+    window.onload = init;
+  </script>
+</body>
+</html>

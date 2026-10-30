@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Exclude local health and workout database from unencrypted cloud backup -->
+        <exclude domain="database" path="pulse_health.db" />
+        <exclude domain="database" path="pulse_health.db-wal" />
+        <exclude domain="database" path="pulse_health.db-shm" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Allow encrypted direct device-to-device transfer when migrating phones -->
+        <include domain="database" path="pulse_health.db" />
+        <include domain="sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

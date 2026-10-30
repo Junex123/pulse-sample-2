@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude local Room database containing health & workout metrics from cloud backup -->
+    <exclude domain="database" path="pulse_health.db" />
+    <exclude domain="database" path="pulse_health.db-wal" />
+    <exclude domain="database" path="pulse_health.db-shm" />
+</full-backup-content>
